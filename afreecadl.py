@@ -10,51 +10,54 @@ import urllib
 import urllib.request as urllib2
 
 class afreecaVideo:
-    def __init__(self, url_base, duration):
-        self.url_base = url_base
-        self.duration = duration
+    def __init__(self, url_base, num_chunks):
+    	self.url_base = url_base
+    	self.num_chunks = num_chunks
 
 file_ext = ".ts"
 
 info_url = "http://afbbs.afreecatv.com:8080/api/video/get_video_info.php?"
 
 def download_chunklist(video):
-	count = (video.duration // 3)
 	failed_downloads = []
 	num_fails = 0
 	global file_ext
 
-	for i in range(0, count+1):
+	for i in range(0, video.num_chunks):
 		if not os.path.isfile("video/" + str(i) + file_ext):
 			try:
-				print("Downloading chunk " + str(i) + "/" + str(count) + "...")
+				print("Downloading chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
 				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext);
 				print("\nDone\n")
 			except urllib.error.HTTPError as e:
 				failed_downloads.append(i)
 				print(e)
 
+	if (failed_downloads):
+		print("\nRetrying failed downloads...\n")
+
 	#Retry failed chunks up to five more times
 	while (failed_downloads):
 		for i in failed_downloads:
 			try:
+				print("Retrying chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
 				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext);
 				failed_downloads.remove(i)
 				num_fails = 0
 			except urllib.error.HTTPError as e:
 				print(e)
+				print("")
 				num_fails += 1
 				if (num_fails == 5):
-					print("Timed out five times in a row, try again later...")
+					print("\nTimed out five times in a row, try again later...")
 					sys.exit()
 
 def write_chunklist_file(video):
 	global file_ext
-	count = (video.duration // 3)
 
 	print("Writing chunklist file...\n")
 	chunklist = open("video/chunklist.txt", "a")
-	for i in range(0, count+1):
+	for i in range(0, video.num_chunks):
 		chunklist.write("file \'" + str(i) + file_ext + "\'\n")
 	chunklist.close()
 	print("Done\n")
@@ -74,9 +77,8 @@ def concat_video(output_file_name):
 
 def clean_up(video):
 	global file_ext
-	count = (video.duration // 3)
 
-	for i in range(0, count+1):
+	for i in range(0, video.num_chunks):
 		os.remove("video/" + str(i) + file_ext)
 	os.remove("video/chunklist.txt")
 
@@ -86,8 +88,9 @@ def parseXML(xmlfile):
 
 	for i in root.findall("./track/video/file"):
 	    url_base = (grab_url_base(i.text))
-	    duration = int(i.attrib['duration'])
-	    video_list.append(afreecaVideo(url_base, duration))
+	    #duration = int(i.attrib['duration'])
+	    num_chunks = grab_num_chunks(url_base[:-1] + "m3u8")
+	    video_list.append(afreecaVideo(url_base, num_chunks))
 
 	return video_list
 
@@ -95,6 +98,11 @@ def grab_url_base(url):
 	page = urllib2.urlopen(url).read().decode('utf-8')
 	url_base = re.search(r"original\"\n(.+)m3u8", page).group(1) + "_"
 	return url_base
+
+def grab_num_chunks(url):
+	page = urllib2.urlopen(url)
+	lines = len(page.readlines())
+	return (lines - 5) // 2
 
 def grab_video_info(url):
 	page = urllib2.urlopen(url).read().decode('utf-8')
