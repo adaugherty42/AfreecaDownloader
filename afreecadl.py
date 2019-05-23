@@ -8,6 +8,10 @@ import re
 import xml.etree.ElementTree as ET
 import urllib
 import urllib.request as urllib2
+import json
+import datetime
+import logging
+import subprocess
 
 class afreecaVideo:
     def __init__(self, url_base, num_chunks):
@@ -26,44 +30,44 @@ def download_chunklist(video):
 	for i in range(0, video.num_chunks):
 		if not os.path.isfile("video/" + str(i) + file_ext):
 			try:
-				print("Downloading chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
-				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext);
-				print("\nDone\n")
+				logging.info("Downloading chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
+				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext, bar=None);
+				logging.info("Done\n")
 			except urllib.error.HTTPError as e:
 				failed_downloads.append(i)
-				print(e)
+				logging.info(e)
 
 	if (failed_downloads):
-		print("\nRetrying failed downloads...\n")
+		logging.info("\nRetrying failed downloads...\n")
 
 	#Retry failed chunks up to five more times
 	while (failed_downloads):
 		for i in failed_downloads:
 			try:
-				print("Retrying chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
-				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext);
+				logging.info("Retrying chunk " + str(i) + "/" + str(video.num_chunks-1) + "...")
+				wget.download(video.url_base + str(i) + file_ext, "video/" + str(i) + file_ext, bar=None);
 				failed_downloads.remove(i)
 				num_fails = 0
 			except urllib.error.HTTPError as e:
-				print(e)
-				print("")
+				logging.info(e)
+				logging.info("")
 				num_fails += 1
 				if (num_fails == 5):
-					print("\nTimed out five times in a row, try again later...")
+					logging.info("\nTimed out five times in a row, try again later...")
 					sys.exit()
 
 def write_chunklist_file(video):
 	global file_ext
 
-	print("Writing chunklist file...\n")
+	logging.info("Writing chunklist file...\n")
 	chunklist = open("video/chunklist.txt", "a")
 	for i in range(0, video.num_chunks):
 		chunklist.write("file \'" + str(i) + file_ext + "\'\n")
 	chunklist.close()
-	print("Done\n")
+	logging.info("Done\n")
 
 def concat_video(output_file_name):
-	print("Concatenating files together...\n")
+	logging.info("Concatenating files together...\n")
 
 	if not os.path.isfile(output_file_name):
 		(
@@ -73,7 +77,7 @@ def concat_video(output_file_name):
 		.run()
 		)
 
-	print("Done\n\nJob Done!!")
+	logging.info("Done\n\nJob Done!!")
 
 def clean_up(video):
 	global file_ext
@@ -109,13 +113,41 @@ def grab_video_info(url):
 	video_id = re.search(r"name=\"nTitleNo\" value=\"([0-9]+)", page).group(1)
 	station_id = re.search(r"name=\"nStationNo\" value=\"([0-9]+)", page).group(1)
 	bbs_id = re.search(r"name=\"nBbsNo\" value=\"([0-9]+)", page).group(1)
+	streamer = re.search(r"szBjId=([0-9a-zA-Z]+)&", page).group(1)
+	date = datetime.datetime.strptime(
+		re.search(r"<span>(\d{2,4}[/-]\d{1,2}[/-]\d{1,2}) ", page).group(1),
+		"%Y-%m-%d")
 
 	global info_url
 	info_url += ("nTitleNo=" + str(video_id) + 
 	            "&nStationNo=" + str(station_id) +
 	            "&nBbsNo=" + str(bbs_id))
 
-	return parseXML(info_url)
+	return (parseXML(info_url), streamer, date)
+
+def get_streamer_list(nickname_as_key):
+	streamers = {}
+
+	response = requests.get('https://bwstreams.appspot.com/streams.json')
+	data = json.loads(response.text)
+
+	if (nickname_as_key):
+		for i in data['streams'].keys():
+			streamers[data['streams'][i]['nickname'].capitalize()] = i[8:]
+	else:
+		for i in data['streams'].keys():
+			streamers[i[8:]] = data['streams'][i]['nickname'].capitalize()
+
+	return streamers
+
+def download_video(video):
+	download_chunklist(video)
+	write_chunklist_file(video)
+
+	output_file_name = "video/" + player + "_" + date + "_" + hour + ".mp4"
+	concat_video(output_file_name)
+
+	clean_up(video)
 
 def main():
 	address = sys.argv[1]
@@ -123,8 +155,10 @@ def main():
 	date = sys.argv[3]
 	hour = sys.argv[4]
 
-	video_list = grab_video_info(address)
+	video_list, streamer, date = grab_video_info(address)
 	video = video_list[int(hour)-1]
+	logging.info(streamer)
+	logging.info(date)
 
 	download_chunklist(video)
 	write_chunklist_file(video)
